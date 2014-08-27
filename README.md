@@ -15,7 +15,7 @@ echo -n Test message | nc -U /path/to/unix/socket
 ### Build ###
 Currently targeting Rust 0.11
 ```
-    rustc irc-relay.rs
+rustc irc-relay.rs
 ```
 
 ### Missing features ###
