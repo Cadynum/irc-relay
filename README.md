@@ -21,4 +21,4 @@ rustc irc-relay.rs
 ```
 
 ### Missing features
-It does not currently handle network disconnects/kicks etc.
+It does not currently handle network kicks/nick collisions/probably other stuff...

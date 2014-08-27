@@ -11,6 +11,7 @@ use std::io::net::unix::UnixListener;
 use std::io::{Acceptor,Listener,IoError};
 use std::str;
 use std::comm;
+use std::comm::{Select};
 use std::os;
 
 
@@ -68,7 +69,7 @@ fn local_ipc(conf : &Config, tx : Sender<String>) {
     }
 }
 
-fn irc_client(conf : &Config, rx : Receiver<String>) -> Result<(), IoError> {
+fn irc_client(conf : &Config, rx : &Receiver<String>) -> Result<(), IoError> {
     let mut stream = try!(TcpStream::connect(conf.host.as_slice(), conf.port));
         
     // Connect
@@ -87,23 +88,33 @@ fn irc_client(conf : &Config, rx : Receiver<String>) -> Result<(), IoError> {
         }
     });
 
+    let sel = Select::new();
+    let mut rx     = sel.handle(rx);
+    let mut irc_rx = sel.handle(&irc_rx);
+    unsafe {
+        rx.add();
+        irc_rx.add();
+    }
+
     loop {
-        select! (
-            msg = rx.recv() => try!(stream.write(format!("PRIVMSG {} :{}\n", conf.channel, msg).as_bytes())),
-            line = irc_rx.recv() => {
-                match line {
-                    Ok(s_) => {
-                        let s = s_.as_slice().trim_right();
-                        stdio::println(s);
-                        match strip_prefix("PING ", s) {
-                            None => (),
-                            Some(ping_req) => try!(stream.write(format!("PONG {}\n", ping_req).as_bytes()))
-                        }
-                    },
-                    Err(e) => { println!("error {}", e); return Err(e)}
-                }
+        let ret = sel.wait();
+        if ret == rx.id() {
+            let msg = rx.recv();
+            try!(stream.write(format!("PRIVMSG {} :{}\n", conf.channel, msg).as_bytes()))
+        } else if ret == irc_rx.id() {
+            let line = irc_rx.recv();
+            match line {
+                Ok(s_) => {
+                    let s = s_.as_slice().trim_right();
+                    stdio::println(s);
+                    match strip_prefix("PING ", s) {
+                        None => (),
+                        Some(ping_req) => try!(stream.write(format!("PONG {}\n", ping_req).as_bytes()))
+                    }
+                },
+                Err(e) => { println!("error {}", e); return Err(e)}
             }
-        )
+        }   
     }
 }
 
@@ -139,11 +150,12 @@ fn main() {
     let c = conf.clone();
     spawn(proc() {
         local_ipc(&c, tx);
-        });
+    });
 
-    match irc_client(&conf, rx) {
-        Err(e) => println!("Error: {}\nReconnecting..", e),
-        Ok(_)  => ()
+    loop {
+        match irc_client(&conf, &rx) {
+            Err(e) => println!("Error: {}\nReconnecting..", e),
+            Ok(_)  => ()
+        }
     }
-    
 }
