@@ -11,8 +11,8 @@ The example requires openbsd-netcat, as gnu netcat cannot communicate with UNIX 
     echo -n Test message | nc -U /path/to/unix/socket
 
 ### Build ###
+Currently targeting Rust 0.11
     rustc irc-relay.rs
-
 
 ### Missing features ###
 It does not currently handle network disconnects/kicks etc.
