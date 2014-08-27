@@ -1,0 +1,9 @@
+{
+    "path": "/path/to/unix/socket",
+    "host": "irc.freenode.net",
+    "port": 6667,
+    "nick": "testbot",
+    "user": "bot",
+    "realname": "Rusty bot",
+    "channel": "#test"
+}
