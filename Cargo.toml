@@ -1,0 +1,8 @@
+[package]
+name = "irc-relay"
+version = "0.1.0"
+authors = ["Christoffer Öjeling <christoffer@ojeling.net>"]
+
+[dependencies]
+rustc-serialize = "0.3"
+unix_socket = "0.3.2"
