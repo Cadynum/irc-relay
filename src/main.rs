@@ -1,23 +1,22 @@
-#![feature(std_misc, exit_status)]
+#![feature(exit_status, std_misc, scoped)]
 extern crate rustc_serialize;
 extern crate unix_socket;
 
 use std::io;
 use std::io::{Read, Write, BufRead, BufReader};
 use std::fs;
-use std::path::Path;
 use std::net::TcpStream;
 use std::env;
 use std::error::Error;
 use std::clone::Clone;
-use std::thread::spawn;
-use std::sync::mpsc::{Select,channel, Sender, Receiver};
+use std::thread;
+use std::sync::mpsc::{channel, Sender, Receiver};
 
 use rustc_serialize::{json, Decodable};
 use unix_socket::UnixListener;
 
-#[derive(RustcDecodable, RustcEncodable, Clone)]
-pub struct Config  {
+#[derive(RustcDecodable, RustcEncodable)]
+struct Config  {
       path     : String
     , host     : String
     , port     : u16
@@ -38,17 +37,15 @@ fn strip_prefix<'a>(prefix : &str, s : &'a str) -> Option<&'a str>{
 
 
 fn local_ipc(conf : &Config, tx : &Sender<String>) {
-    let path = Path::new(&conf.path);
-
     // Delete old socket if necessary
-    fs::remove_file(path);
+    let _ = fs::remove_file(&conf.path);
 
     // Bind to socket
-    let stream = UnixListener::bind(&path).unwrap();
+    let stream = UnixListener::bind(&conf.path).unwrap();
     let mut id = 0usize;
     for client in stream.incoming() {
         let tx = tx.clone();
-        spawn(move|| {
+        thread::spawn(move || {
             println!("Client {} connected", id);
             let reader = BufReader::new(client.unwrap());
             for line in reader.lines() {
@@ -67,7 +64,7 @@ fn local_ipc(conf : &Config, tx : &Sender<String>) {
 
 fn irc_client(conf : &Config, rx : &Receiver<String>) -> Result<(), io::Error> {
 
-    let mut stream = try!(TcpStream::connect((&conf.host[..], conf.port)));
+    let stream = try!(TcpStream::connect((&conf.host[..], conf.port)));
 
     // Connect
     try!(writeln!(&stream, "USER {} 0 * :{}", conf.user, conf.realname));
@@ -78,50 +75,40 @@ fn irc_client(conf : &Config, rx : &Receiver<String>) -> Result<(), io::Error> {
 
     let reader = BufReader::new(try!(stream.try_clone()));
     // Receieve network
-    spawn(move|| {
+    let guard = thread::scoped(move || {
         for line in reader.lines() {
             irc_tx.send(line.unwrap()).unwrap();
         }
     });
 
-    let sel = Select::new();
-    let mut rx     = sel.handle(rx);
-    let mut irc_rx = sel.handle(&irc_rx);
-    unsafe {
-        rx.add();
-        irc_rx.add();
-    }
-
     loop {
-        let ret = sel.wait();
-        if ret == rx.id() {
-            let msg = rx.recv().unwrap();
-            try!(stream.write(format!("PRIVMSG {} :{}\n", conf.channel, msg).as_bytes()));
-        } else if ret == irc_rx.id() {
-            let msg = irc_rx.recv().unwrap();
-            let s = msg[..].trim_right();
-            println!("{}", s);
-            strip_prefix("PING ", s).and_then(|s| writeln!(stream, "PONG {}", s).ok());
-        }
+        select! (
+            msg = rx.recv() => {
+                try!(writeln!(&stream, "PRIVMSG {} :{}", conf.channel, msg.unwrap()));
+            },
+            msg = irc_rx.recv() => {
+                let s = msg.unwrap();
+                let s = s[..].trim_right();
+                println!("{}", s);
+                strip_prefix("PING ", s).and_then(|s| writeln!(&stream, "PONG {}", s).ok());
+            }
+        )
     }
 }
 
-
 fn get_config() -> Result<Config, String> {
-    let raw_path = env::args().nth(1).unwrap_or("/etc/irc-relay.json".to_owned());
-    let path = Path::new(&raw_path);
-    println!("{}", path.display());
+    let path = env::args().nth(1).unwrap_or("/etc/irc-relay.json".to_owned());
 
     let mut raw_file_utf8 = String::new();
-    try!(fs::File::open(path)
-        .map_err(|x| format!("{}: {}", raw_path, x)))
+    let _ = try!(fs::File::open(&path)
+        .map_err(|x| format!("{}: {}", path, x)))
         .read_to_string(&mut raw_file_utf8);
 
     let json_object = try!(json::Json::from_str(&raw_file_utf8)
-        .map_err(|x| format!("{}: {}", raw_path, x)));
+        .map_err(|x| format!("{}: {}", path, x)));
     let mut decoder = json::Decoder::new(json_object);
     Decodable::decode(&mut decoder)
-        .map_err(|x| format!("{}: {}", raw_path, x))
+        .map_err(|x| format!("{}: {}", path, x))
 
 }
 
@@ -135,11 +122,12 @@ fn main() {
             return;
         }
     };
-
     let (tx, rx) = channel::<String>();
 
-    let c = conf.clone();
-    spawn(move || local_ipc(&c, &tx));
+    let guard = thread::scoped(|| {
+        let tx = tx;
+        local_ipc(&conf, &tx)
+    });
 
     loop {
         match irc_client(&conf, &rx) {
