@@ -12,7 +12,7 @@ use std::clone::Clone;
 use std::thread;
 use std::sync::mpsc::{channel, Sender, Receiver};
 
-use rustc_serialize::{json, Decodable};
+use rustc_serialize::json;
 use unix_socket::UnixListener;
 
 #[derive(RustcDecodable, RustcEncodable)]
@@ -29,7 +29,7 @@ struct Config  {
 
 fn strip_prefix<'a>(prefix : &str, s : &'a str) -> Option<&'a str>{
     if s.starts_with(prefix) {
-        Some(&s[s.len()..])
+        Some(&s[prefix.len()..])
     } else {
         None
     }
@@ -104,12 +104,8 @@ fn get_config() -> Result<Config, String> {
         .map_err(|x| format!("{}: {}", path, x)))
         .read_to_string(&mut raw_file_utf8);
 
-    let json_object = try!(json::Json::from_str(&raw_file_utf8)
-        .map_err(|x| format!("{}: {}", path, x)));
-    let mut decoder = json::Decoder::new(json_object);
-    Decodable::decode(&mut decoder)
+    json::decode(&raw_file_utf8)
         .map_err(|x| format!("{}: {}", path, x))
-
 }
 
 
